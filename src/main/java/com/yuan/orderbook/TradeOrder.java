@@ -149,4 +149,9 @@ public class TradeOrder implements Comparable<TradeOrder>{
 			throw new TradeOrderException("Reduction size is invalid");
 		}
 	}
+	
+	@Override
+	public String toString(){
+		return "{Order ID: " + this.orderID + " Quantity: " + this.orderSize + " Price " + this.price +"}";
+	}
 }

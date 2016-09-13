@@ -31,8 +31,8 @@ public class Pricer {
 	 */
 	public Pricer(Long targetSize){
 		this.targetSize = targetSize;
-		this.askBook = new OrderBook(Side.ASK);
-		this.bidBook = new OrderBook(Side.BID);
+		this.askBook = new OrderBook(Side.ASK, targetSize);
+		this.bidBook = new OrderBook(Side.BID, targetSize);
 		this.lastTotalBuyValue = new BigDecimal(-1); //-1 signifies that a buy order at target-size cannot be executed
 		this.lastTotalSaleValue = new BigDecimal(-1); //-1 signifies that a sell order at target-size cannot be executed
 	}
@@ -90,7 +90,7 @@ public class Pricer {
 	 * @return
 	 */
 	private BigDecimal updateSaleValue(){
-		BigDecimal val = this.bidBook.computeValue(this.targetSize);
+		BigDecimal val = this.bidBook.computeValue();
 		if(!Objects.equals(val, this.lastTotalSaleValue)){
 			this.lastTotalSaleValue = val;
 			return val;
@@ -110,7 +110,7 @@ public class Pricer {
 	 * @return
 	 */
 	private BigDecimal updateBuyValue(){
-		BigDecimal val = this.askBook.computeValue(this.targetSize);
+		BigDecimal val = this.askBook.computeValue();
 		if(!Objects.equals(val, this.lastTotalBuyValue)){
 			this.lastTotalBuyValue = val;
 			return val;

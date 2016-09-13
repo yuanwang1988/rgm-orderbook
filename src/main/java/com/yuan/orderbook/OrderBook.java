@@ -19,10 +19,12 @@ import com.yuan.orderbook.TradeOrder.Side;
 public class OrderBook {
 	
 	private Side side; //{BID or ASK}
-	private Long totalSize; //total quantity (in shares) of orders in the book
-	private Map<String, TradeOrder> ordersMap; //map of order-id to order
-	private PriorityQueue<TradeOrder> orderQueue; //priority heap of orders (ASK - lowest price at top; BID - highest price at top)
-	private BigDecimal thresholdPrice; //if the new order or reduce order meets a threshold, it could affect the trade-value at the target-size
+	private Long targetSize;
+	private Long topQueueSize;
+	private Map<String, TradeOrder> topOrdersMap; //map of order-id to order of orders that will be executed with a trade of target-size
+	private Map<String, TradeOrder> bottomOrdersMap; //map of order-id to order of orders that will not be executed with a trade of target-size
+	private PriorityQueue<TradeOrder> topOrderQueue; //priority heap of orders that will be executed with a trade of target-size (ASK - highest price at top; BID - lowest price at top)
+	private PriorityQueue<TradeOrder> bottomOrderQueue; //priority heap of orders that will not be executed with a trade of target-size (ASK - lowest price at top; BID - highest price at top)
 	private BigDecimal cachedTradeValue; //if the trade value at target-size need to be recomputed, null; otherwise this stores the trade value at target0-size
 	
 	/**
@@ -30,18 +32,23 @@ public class OrderBook {
 	 * for Bid or Ask respectively.
 	 * 
 	 * @param side
+	 * @param targetSize
 	 */
-	public OrderBook(Side side){
+	public OrderBook(Side side, Long targetSize){
 		this.side = side;
-		this.totalSize = (long) 0;
-		this.ordersMap = new HashMap<String, TradeOrder>();
+		this.targetSize = targetSize;
+		this.topQueueSize = (long) 0;
+		this.topOrdersMap = new HashMap<String, TradeOrder>();
+		this.bottomOrdersMap = new HashMap<String, TradeOrder>();
 		if(this.side==Side.ASK){
-			this.orderQueue = new PriorityQueue<TradeOrder>();
+			this.topOrderQueue = new PriorityQueue<TradeOrder>(11, Collections.reverseOrder()); //highest non-executed price on top
+			this.bottomOrderQueue = new PriorityQueue<TradeOrder>(); //lowest non-executed price on top
 		}else{
-			this.orderQueue = new PriorityQueue<TradeOrder>(11, Collections.reverseOrder());
+			this.topOrderQueue = new PriorityQueue<TradeOrder>(); //lowest executed price on top
+			this.bottomOrderQueue = new PriorityQueue<TradeOrder>(11, Collections.reverseOrder()); //highest non-executed price on top
+			
 		}
-		this.thresholdPrice=null;
-		this.cachedTradeValue=null;
+		this.cachedTradeValue= BigDecimal.ZERO;
 	}
 	
 	/**
@@ -57,11 +64,64 @@ public class OrderBook {
 	public void processNewOrder(String tradeID, Long timeStampMilliSecs, Side side, BigDecimal price, Long orderSize) 
 			throws TradeOrderException{
 		TradeOrder tradeOrder = new TradeOrder(tradeID, timeStampMilliSecs, side, price, orderSize);
-		this.invalidateCachedTradeValueIfAppropriate(price);
-		this.ordersMap.put(tradeID, tradeOrder);
-		this.orderQueue.add(tradeOrder);
-		this.totalSize += orderSize;	
+		
+		if(this.checkBelongToTopQueue(tradeOrder)){
+			this.topOrdersMap.put(tradeID, tradeOrder);
+			this.topOrderQueue.add(tradeOrder);
+			this.topQueueSize += orderSize;
+			this.cachedTradeValue = this.cachedTradeValue.add(price.multiply(new BigDecimal(orderSize)));
+		
+			while(this.topQueueSize > this.targetSize){
+				//remove from top-heap
+				TradeOrder currOrder = this.topOrderQueue.remove();
+				this.topOrdersMap.remove(currOrder.getOrderID());
+				
+				//move to bottom-heap
+				Long quantityToShift = Math.min(currOrder.getOrderSize(), this.topQueueSize-this.targetSize);
+				Long quantityRemaining = currOrder.getOrderSize() - quantityToShift;
+				
+				Long existingQuantity = Long.valueOf(0);
+				if(this.bottomOrdersMap.containsKey(currOrder.getOrderID())){
+					existingQuantity = this.bottomOrdersMap.get(currOrder.getOrderID()).getOrderSize();
+					this.bottomOrderQueue.remove(this.bottomOrdersMap.get(currOrder.getOrderID()));
+				}
+				
+				TradeOrder shiftedOrder = new TradeOrder(currOrder.getOrderID(), currOrder.getTimeStampMilliSec(), 
+						currOrder.getSide(), currOrder.getPrice(), existingQuantity+quantityToShift);
+				this.bottomOrderQueue.add(shiftedOrder);
+				this.bottomOrdersMap.put(shiftedOrder.getOrderID(), shiftedOrder);
+				
+				this.topQueueSize -= quantityToShift;
+//				System.out.println("shifted order price" + shiftedOrder.getPrice().toString());
+				
+				this.cachedTradeValue = this.cachedTradeValue
+						.subtract(shiftedOrder.getPrice().multiply(new BigDecimal(quantityToShift)));
+				
+				if(quantityRemaining > 0){
+					TradeOrder remainingOrder = new TradeOrder(currOrder.getOrderID(), currOrder.getTimeStampMilliSec(), 
+							currOrder.getSide(), currOrder.getPrice(), quantityRemaining);
+					this.topOrderQueue.add(remainingOrder);
+					this.topOrdersMap.put(remainingOrder.getOrderID(), remainingOrder);
+				}
+			}
+			
+		}else{
+			this.bottomOrderQueue.add(tradeOrder);
+			this.bottomOrdersMap.put(tradeID, tradeOrder);
+		}
+//		if(this.side==Side.BID){
+//			System.out.println("BID top queue size" + this.topQueueSize.toString());
+//			System.out.println("value" + this.cachedTradeValue);
+//			System.out.println(this.topOrdersMap.toString());
+//			System.out.println(this.bottomOrdersMap.toString());
+//		}else{
+//			System.out.println("ASK top queue size" + this.topQueueSize.toString());
+//			System.out.println("value" + this.cachedTradeValue);
+//			System.out.println(this.topOrdersMap.toString());
+//			System.out.println(this.bottomOrdersMap.toString());
+//		}
 	}
+		
 	
 	/**
 	 * Given a reduce order, update the trade-book
@@ -73,27 +133,98 @@ public class OrderBook {
 	 */
 	public void processReduceOrder(String tradeID, Long timeStampMilliScs, Long reductionSize) 
 			throws TradeOrderException{
-		if(ordersMap.containsKey(tradeID)){
-			TradeOrder tradeOrder = ordersMap.get(tradeID);
-			this.invalidateCachedTradeValueIfAppropriate(tradeOrder.getPrice());
+		
+		if(this.bottomOrdersMap.containsKey(tradeID) || this.topOrdersMap.containsKey(tradeID)){
 			
-			//remove the order from the queue, we will add back
-			//the reduced order if it still has positive size
-			this.orderQueue.remove(tradeOrder);
-			
-			//reduce the order
-			tradeOrder.reduce(reductionSize);
-			this.totalSize -= reductionSize;
-			
-			if(tradeOrder.getOrderSize() == 0){
-				//if the size of the trade order is reduced to zero, remove it from the map
-				this.ordersMap.remove(tradeID);
-				this.orderQueue.remove(tradeOrder);
-			}else{
-				//if the reduced order still has positive size, add it back to the queue
-				this.orderQueue.add(tradeOrder);
+			Long quantityReduced = Long.valueOf(0);
+			if(this.bottomOrdersMap.containsKey(tradeID)){
+				TradeOrder tradeOrder = this.bottomOrdersMap.get(tradeID);
+				//remove the order from the queue, we will add back
+				//the reduced order if it still has positive size
+				this.bottomOrderQueue.remove(tradeOrder);
+				
+				//reduce the order
+				quantityReduced = Math.min(tradeOrder.getOrderSize(), reductionSize);
+				tradeOrder.reduce(quantityReduced);
+				
+				if(tradeOrder.getOrderSize() == 0){
+					//if the size of the trade order is reduced to zero, remove it from the map
+					this.bottomOrdersMap.remove(tradeID);
+				}else{
+					//if the reduced order still has positive size, add it back to the queue
+					this.bottomOrderQueue.add(tradeOrder);
+				}
 			}
 			
+			Long quantityStillToBeReduced = reductionSize - quantityReduced;
+			if(quantityStillToBeReduced > 0){
+				if(this.topOrdersMap.containsKey(tradeID)){
+					TradeOrder tradeOrder = this.topOrdersMap.get(tradeID);
+					//remove the order from the queue, we will add back
+					//the reduced order if it still has positive size
+					this.topOrderQueue.remove(tradeOrder);
+					
+					//reduce the order
+					tradeOrder.reduce(quantityStillToBeReduced);
+					this.topQueueSize -= quantityStillToBeReduced;
+					this.cachedTradeValue = this.cachedTradeValue
+							.subtract(tradeOrder.getPrice().multiply(new BigDecimal(quantityStillToBeReduced)));
+					
+					if(tradeOrder.getOrderSize() == 0){
+						//if the size of the trade order is reduced to zero, remove it from the map
+						this.topOrdersMap.remove(tradeID);
+					}else{
+						//if the reduced order still has positive size, add it back to the queue
+						this.topOrderQueue.add(tradeOrder);
+					}
+					
+					while(this.topQueueSize < this.targetSize && this.bottomOrderQueue.size()>0){
+						//remove from bottom-heap
+						TradeOrder currOrder = this.bottomOrderQueue.remove();
+						this.bottomOrdersMap.remove(currOrder.getOrderID());
+						
+						//move to top
+						Long quantityToShift = Math.min(currOrder.getOrderSize(), this.targetSize-this.topQueueSize);
+						Long quantityRemaining = currOrder.getOrderSize() - quantityToShift;
+						
+						Long existingQuantity = Long.valueOf(0);
+						if(this.topOrdersMap.containsKey(currOrder.getOrderID())){
+							existingQuantity = this.topOrdersMap.get(currOrder.getOrderID()).getOrderSize();
+							this.topOrderQueue.remove(this.topOrdersMap.get(currOrder.getOrderID()));
+						}
+						TradeOrder shiftedOrder = new TradeOrder(currOrder.getOrderID(), currOrder.getTimeStampMilliSec(), 
+								currOrder.getSide(), currOrder.getPrice(), existingQuantity + quantityToShift);
+						this.topOrderQueue.add(shiftedOrder);
+						this.topOrdersMap.put(shiftedOrder.getOrderID(), shiftedOrder);
+						this.cachedTradeValue = this.cachedTradeValue
+								.add(shiftedOrder.getPrice().multiply(new BigDecimal(quantityToShift)));
+						this.topQueueSize += quantityToShift;
+						
+						if(quantityRemaining > 0){
+							TradeOrder remainingOrder = new TradeOrder(currOrder.getOrderID(), currOrder.getTimeStampMilliSec(), 
+									currOrder.getSide(), currOrder.getPrice(), quantityRemaining);
+							this.bottomOrderQueue.add(remainingOrder);
+							this.bottomOrdersMap.put(remainingOrder.getOrderID(), remainingOrder);
+						}
+					}
+				}else{
+					System.out.println("something weird happend");
+					throw new TradeOrderException("Reduction order larger than existing trade orders.");
+				}
+				
+			}
+			
+//			if(this.side==Side.BID){
+//				System.out.println("BID top queue size" + this.topQueueSize.toString());
+//				System.out.println("value" + this.cachedTradeValue);
+//				System.out.println(this.topOrdersMap.toString());
+//				System.out.println(this.bottomOrdersMap.toString());
+//			}else{
+//				System.out.println("ASK top queue size" + this.topQueueSize.toString());
+//				System.out.println("value" + this.cachedTradeValue);
+//				System.out.println(this.topOrdersMap.toString());
+//				System.out.println(this.bottomOrdersMap.toString());
+//			}
 		}else{
 			throw new TradeOrderException("Unknown trade ID in the reduction order");
 		}
@@ -107,38 +238,13 @@ public class OrderBook {
 	 * @param targetSize
 	 * @return
 	 */
-	public BigDecimal computeValue(Long targetSize){
-		if (this.cachedTradeValue == null){
-			TradeValueAndThresholdPriceCombo result = this.computeValueHelper(targetSize);
-			this.cachedTradeValue = result.getTradeValue();
-			this.thresholdPrice = result.getThresholdPrice();
-		}
-		return this.cachedTradeValue;
-
-	}
-	
-	private TradeValueAndThresholdPriceCombo computeValueHelper(Long targetSize){
-		if(this.totalSize >= targetSize){			
-			BigDecimal currPrice = null; //this should be the threshold price after the while-loop
-			BigDecimal valueTraded = BigDecimal.ZERO; //this should be the total trade-value after the while-loop
-			List<TradeOrder> orderBuffer = new ArrayList<TradeOrder>(); //this stores all of the trades popped off during the while-loop
-			
-			Long quantityTraded = Long.valueOf(0);
-			while(quantityTraded < targetSize){
-				TradeOrder currOrder = this.orderQueue.remove(); //pop the best trade from the queue
-				currPrice = currOrder.getPrice();
-				orderBuffer.add(currOrder);
-				Long currOrderQuantityTraded = Math.min(currOrder.getOrderSize(), targetSize - quantityTraded);
-				quantityTraded += currOrderQuantityTraded;
-				valueTraded = valueTraded.add(currOrder.getPrice().multiply(new BigDecimal(currOrderQuantityTraded)));
-			}
-			
-			this.orderQueue.addAll(orderBuffer); //add back all of the popped off trades
-			
-			return new TradeValueAndThresholdPriceCombo(valueTraded, currPrice);
+	public BigDecimal computeValue(){
+		if(this.topQueueSize.equals(this.targetSize)){
+			return this.cachedTradeValue;
 		}else{
-			return new TradeValueAndThresholdPriceCombo(new BigDecimal(-1), null);
+			return new BigDecimal(-1); //indicate not enough orders in the book to execute the trade
 		}
+
 	}
 	
 	/**
@@ -148,53 +254,20 @@ public class OrderBook {
 	 * @return
 	 */
 	public boolean contains(String tradeID){
-		return this.ordersMap.containsKey(tradeID);
+		return this.topOrdersMap.containsKey(tradeID) 
+				|| this.bottomOrdersMap.containsKey(tradeID);
 	}
 	
-	/**
-	 * Check whether a new order or reduce order affects the trade-value to trade
-	 * the target-size. If so, invalidate the cachedTradeValue by setting it to null.
-	 * <p>
-	 * NOTE: we chose to only have one method for new orders and reduce orders.
-	 * We achieve slightly better performance with a separate method for new order
-	 * and reduce order.
-	 * 
-	 * @param price
-	 */
-	private void invalidateCachedTradeValueIfAppropriate(BigDecimal price){
-		if(this.side == Side.BID){//On BID side, trades with price >= threshold price could affect the trade value
-			if(this.thresholdPrice == null || price.compareTo(this.thresholdPrice)>=0){
-				this.cachedTradeValue = null; // invalidate the cached trade value
+	private Boolean checkBelongToTopQueue(TradeOrder tradeOrder){
+		if(this.topQueueSize < this.targetSize){
+			return true;
+		}else{
+			TradeOrder worstExecutedOrder = this.topOrderQueue.peek();
+			if(this.side==Side.ASK){
+				return tradeOrder.getPrice().compareTo(worstExecutedOrder.getPrice()) < 0;
+			}else{
+				return tradeOrder.getPrice().compareTo(worstExecutedOrder.getPrice()) > 0;
 			}
-		}else{//On ASK side, trades with price <= threshold price could affect the trade value
-			if(this.thresholdPrice == null || price.compareTo(this.thresholdPrice)<=0){
-				this.cachedTradeValue = null; // invalidate the cached trade value
-			}
-		}
-		
-	}
-	
-	/**
-	 * Private class to hold a combination of trade-value and threshold-price
-	 * 
-	 * @author yuan
-	 *
-	 */
-	private static class TradeValueAndThresholdPriceCombo{
-		private BigDecimal tradeValue;
-		private BigDecimal thresholdPrice;
-		
-		public TradeValueAndThresholdPriceCombo(BigDecimal tradeValue, BigDecimal thresholdPrice){
-			this.tradeValue = tradeValue;
-			this.thresholdPrice = thresholdPrice;
-		}
-		
-		public BigDecimal getTradeValue(){
-			return this.tradeValue;
-		}
-		
-		public BigDecimal getThresholdPrice(){
-			return this.thresholdPrice;
 		}
 	}
 	
