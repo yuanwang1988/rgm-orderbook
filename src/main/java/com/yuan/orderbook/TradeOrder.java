@@ -18,7 +18,7 @@ public class TradeOrder implements Comparable<TradeOrder>{
 	 * @param orderID
 	 * @param timeStampMilliSecs
 	 * @param side
-	 * @param priceCents
+	 * @param price
 	 * @param orderSize
 	 * @throws TradeOrderException 
 	 */
