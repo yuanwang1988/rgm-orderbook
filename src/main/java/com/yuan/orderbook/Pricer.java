@@ -1,10 +1,9 @@
 package com.yuan.orderbook;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.util.Objects;
+import java.util.Scanner;
+
 import com.yuan.orderbook.TradeOrder.Side;
 
 /**
@@ -40,7 +39,7 @@ public class Pricer {
 	/**
 	 * Given a string representation of a new order or a 
 	 * reduction order, consume the order message by updating
-	 * the underlying representation of the order books
+	 * the underlying bid-book or ask-book.
 	 * 
 	 * @param orderStr
 	 * @throws TradeOrderException - if the trade-order does not follow
@@ -54,12 +53,12 @@ public class Pricer {
 			
 			this.timeStampMilliSec = timeStampMilliSecs;
 			if(orderStrArray[1].equals("A")){ //new order
-				BigDecimal priceCents = new BigDecimal(orderStrArray[4]); //need to re-write to handle different cases
+				BigDecimal price = new BigDecimal(orderStrArray[4]);
 				Long orderSize = Long.parseLong(orderStrArray[5]);
 				if(orderStrArray[3].equals("B")){ // buy/bid
-					this.bidBook.processNewOrder(tradeID, timeStampMilliSecs, Side.BID, priceCents, orderSize);
+					this.bidBook.processNewOrder(tradeID, timeStampMilliSecs, Side.BID, price, orderSize);
 				}else if(orderStrArray[3].equals("S")){// sell/ask
-					this.askBook.processNewOrder(tradeID, timeStampMilliSecs, Side.ASK, priceCents, orderSize);
+					this.askBook.processNewOrder(tradeID, timeStampMilliSecs, Side.ASK, price, orderSize);
 				}else{
 					throw new TradeOrderException("Unrecognized order string - bid/ask not properly encoded.");
 				}
@@ -152,34 +151,20 @@ public class Pricer {
 	 * and buy-value to standard-output
 	 */
 	private void run(){
-		BufferedReader br = null;
-		try{
-			br = new BufferedReader(new InputStreamReader(System.in));
-			while(true){
-				String tradeMsg = br.readLine();
-				if(tradeMsg == null){
-					break;
-				}
-				try {
-					this.consumeOrderAndProduceOutput(tradeMsg);
-				} catch (TradeOrderException e) {
-					System.err.println("WARNING: Invalid trade message received. Ignored.");
-				}
+		
+		Scanner scanner = new Scanner(System.in);
+		while(true){
+			String tradeMsg = scanner.nextLine();
+			if(tradeMsg == null){
+				break;
 			}
-			
-		}catch(IOException e){
-			e.printStackTrace();
-		}finally{
-			if(br != null){
-				if(br != null){
-					try{
-						br.close();
-					}catch(IOException e){
-						e.printStackTrace();
-					}
-				}
+			try {
+				this.consumeOrderAndProduceOutput(tradeMsg);
+			} catch (TradeOrderException e) {
+				System.err.println("WARNING: Invalid trade message received. Ignored.");
 			}
 		}
+		scanner.close();
 	}
 	
 	public static void main(String[] args) throws TradeOrderException{
