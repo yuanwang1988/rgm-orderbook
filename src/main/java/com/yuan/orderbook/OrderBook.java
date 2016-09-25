@@ -14,7 +14,7 @@ import com.yuan.orderbook.TradeOrder.Side;
 public class OrderBook {
 	
 	private Side side; //{BID or ASK}
-	private Long targetSize;
+	private Long targetSize; //size of targeted trade
 	private OrderHeap topHeap; //top heap keeps track of orders that would be executed against a trade of target-size
 	private OrderHeap bottomHeap; //bottom heap keeps track of orders that would not be executed against a trade of target-size
 	
@@ -22,18 +22,24 @@ public class OrderBook {
 	 * Given a side (i.e. BID or ASK), construct an instance of the TradeBook
 	 * for Bid or Ask respectively.
 	 * 
-	 * @param side
-	 * @param targetSize
+	 * @param side - side of the order book (i.e. ASK or BID)
+	 * @param targetSize - size of target trade (in number of shares)
 	 */
 	public OrderBook(Side side, Long targetSize){
 		this.side = side;
 		this.targetSize = targetSize;
 		if(this.side==Side.ASK){
-			this.topHeap = new OrderHeap(Collections.reverseOrder()); //highest (worst) executed price on top
-			this.bottomHeap = new OrderHeap(null); //lowest (best) non-executed price on top
+			//for ask-orders, the lowest priced orders are executed first
+			//the top of the top-heap is the highest priced ask-order that would be executed against a trade of target size
+			//the top of the bottom-heap is the lowest priced ask-order that would not be executed against a trade of target size
+			this.topHeap = new OrderHeap(Collections.reverseOrder());
+			this.bottomHeap = new OrderHeap(null);
 		}else{
-			this.topHeap = new OrderHeap(null); //lowest (worst) executed price on top
-			this.bottomHeap = new OrderHeap(Collections.reverseOrder());  //highest (best) non-executed price on top
+			//for bid-orders, the highest priced orders are executed first
+			//the top of the top-heap is the lowest priced bid-order that would be executed against a trade of target size
+			//the top of the bottom-heap is the highest priced bid-order that would not be executed against a trade of target size
+			this.topHeap = new OrderHeap(null); 
+			this.bottomHeap = new OrderHeap(Collections.reverseOrder());  
 		}
 	}
 	
@@ -45,16 +51,16 @@ public class OrderBook {
 	 * @param side
 	 * @param price
 	 * @param orderSize
-	 * @throws TradeOrderException
+	 * @throws TradeOrderException - if the new add order does not conform to expected schema
 	 */
 	public void processNewOrder(String orderID, Long timeStampMilliSecs, Side side, BigDecimal price, Long orderSize) 
 			throws TradeOrderException{
 		
-		//if an exception is thrown in constructing a new order, this method is terminated and the 
-		//invariant of the topHeap and bottomHeap is not broken.
+		//if an exception is thrown in constructing a new order, this method is terminated before any 
+		//change is made to the underlying data so the invariant of the topHeap and bottomHeap is not broken.
 		TradeOrder tradeOrder = new TradeOrder(orderID, timeStampMilliSecs, side, price, orderSize);
 		
-		if(this.checkBelongToTopQueue(tradeOrder)){
+		if(this.checkBelongToTopHeap(tradeOrder)){
 			this.topHeap.addTradeOrder(tradeOrder);
 			//reduce the top-heap to target-size and shift the excess orders to bottom heap
 			List<TradeOrder> topHeapOrdersPopped = this.topHeap.reduceHeapToTargetSize(this.targetSize);
@@ -70,7 +76,8 @@ public class OrderBook {
 	 * @param orderID
 	 * @param timeStampMilliScs
 	 * @param reductionSize
-	 * @throws TradeOrderException
+	 * @throws TradeOrderException - if the reduce order does not conform to expected schema 
+	 * or exceed existing order in size
 	 */
 	public void processReduceOrder(String orderID, Long timeStampMilliScs, Long reductionSize) 
 			throws TradeOrderException{
@@ -113,11 +120,11 @@ public class OrderBook {
 	}
 	
 	/**
-	 * Return the current value to trade the target-size.
-	 * <p>
-	 * NOTE: this method has a side-effect of updating the cachedTradeValue and thresholdPrice
+	 * If the order book contains sufficient orders to execute the target trade, 
+	 * return the value to execute a trade of the target-size. 
+	 * Otherwise, return -1.
 	 * 
-	 * @param targetSize
+	 * @param targetSize - size of target trade
 	 * @return
 	 */
 	public BigDecimal computeValue(){
@@ -148,14 +155,14 @@ public class OrderBook {
 	 * @param tradeOrder
 	 * @return
 	 */
-	private Boolean checkBelongToTopQueue(TradeOrder tradeOrder){
+	private Boolean checkBelongToTopHeap(TradeOrder tradeOrder){
 		if(this.topHeap.getTotalQuantity() < this.targetSize){
 			return true;
 		}else{
 			TradeOrder worstExecutedOrder = this.topHeap.peek();
-			if(this.side==Side.ASK){
+			if(this.side==Side.ASK){ // for ask orders, return true if the price is less than the top of the top-heap
 				return tradeOrder.getPrice().compareTo(worstExecutedOrder.getPrice()) < 0;
-			}else{
+			}else{ // for bid orders, return true if the price is greater than the top of the top-heap
 				return tradeOrder.getPrice().compareTo(worstExecutedOrder.getPrice()) > 0;
 			}
 		}

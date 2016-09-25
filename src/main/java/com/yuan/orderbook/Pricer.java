@@ -26,7 +26,7 @@ public class Pricer {
 	/**
 	 * Instantiate a Pricer object with the specified targetSize.
 	 * 
-	 * @param targetSize
+	 * @param targetSize - size (in shares) of the target trade
 	 */
 	public Pricer(Long targetSize){
 		this.targetSize = targetSize;
@@ -37,11 +37,61 @@ public class Pricer {
 	}
 	
 	/**
+	 * consumes trade messages from standard-input and write updates to sale-value
+	 * and buy-value to standard-output
+	 */
+	public void run(){
+		
+		Scanner scanner = new Scanner(System.in);
+		while(scanner.hasNextLine()){
+			String tradeMsg = scanner.nextLine();
+			if(tradeMsg == null){
+				break;
+			}
+			try {
+				this.consumeOrderAndProduceOutput(tradeMsg);
+			} catch (TradeOrderException e) {
+				System.err.println("WARNING: Invalid trade message received. Ignored.");
+			}
+		}
+		scanner.close();
+	}
+	
+	/**
+	 * Given a string representation of a new order or a 
+	 * reduction order, consume the order message by updating
+	 * the underlying representation of the order book. Also,
+	 * if the sale value or buy value has changed since the last
+	 * call to this method, print the update messages to standard
+	 * output.
+	 * <p>
+	 * NOTE: if it is impossible to buy, the buy value is -1. 
+	 * Similarly, if it is impossible to sell, the sell value is
+	 * represented by -1.
+	 * 
+	 * @param orderStr - string representation of a new add order or a reduce order
+	 * @throws TradeOrderException - if the trade-order does not follow
+	 * the expected schema
+	 */
+	public void consumeOrderAndProduceOutput(String orderStr) throws TradeOrderException{
+		this.consumeOrderString(orderStr);
+		BigDecimal updatedBuyValue = this.updateBuyValue();
+		BigDecimal updatedSaleValue = this.updateSaleValue();
+		
+		if(updatedBuyValue != null){
+			System.out.println(Objects.toString(this.timeStampMilliSec) + " B " + Objects.toString(updatedBuyValue).replace("-1", "NA"));
+		}
+		if(updatedSaleValue != null){
+			System.out.println(Objects.toString(this.timeStampMilliSec) + " S " + Objects.toString(updatedSaleValue).replace("-1", "NA"));
+		}
+	}
+	
+	/**
 	 * Given a string representation of a new order or a 
 	 * reduction order, consume the order message by updating
 	 * the underlying bid-book or ask-book.
 	 * 
-	 * @param orderStr
+	 * @param orderStr - string representation of a new add order or a reduce order
 	 * @throws TradeOrderException - if the trade-order does not follow
 	 * the expected schema
 	 */
@@ -55,9 +105,9 @@ public class Pricer {
 			if(orderStrArray[1].equals("A")){ //new order
 				BigDecimal price = new BigDecimal(orderStrArray[4]);
 				Long orderSize = Long.parseLong(orderStrArray[5]);
-				if(orderStrArray[3].equals("B")){ // buy/bid
+				if(orderStrArray[3].equals("B")){ // new buy/bid order
 					this.bidBook.processNewOrder(tradeID, timeStampMilliSecs, Side.BID, price, orderSize);
-				}else if(orderStrArray[3].equals("S")){// sell/ask
+				}else if(orderStrArray[3].equals("S")){// new sell/ask order
 					this.askBook.processNewOrder(tradeID, timeStampMilliSecs, Side.ASK, price, orderSize);
 				}else{
 					throw new TradeOrderException("Unrecognized order string - bid/ask not properly encoded.");
@@ -118,62 +168,13 @@ public class Pricer {
 		}
 	}
 	
-	/**
-	 * Given a string representation of a new order or a 
-	 * reduction order, consume the order message by updating
-	 * the underlying representation of the order book. Also,
-	 * if the sale value or buy value has changed since the last
-	 * call to this method, print the update messages to standard
-	 * output.
-	 * <p>
-	 * NOTE: if it is impossible to buy, the buy value is -1. 
-	 * Similarly, if it is impossible to sell, the sell value is
-	 * represented by -1.
-	 * 
-	 * @param orderStr
-	 * @throws TradeOrderException
-	 */
-	private void consumeOrderAndProduceOutput(String orderStr) throws TradeOrderException{
-		this.consumeOrderString(orderStr);
-		BigDecimal updatedBuyValue = this.updateBuyValue();
-		BigDecimal updatedSaleValue = this.updateSaleValue();
-		
-		if(updatedBuyValue != null){
-			System.out.println(Objects.toString(this.timeStampMilliSec) + " B " + Objects.toString(updatedBuyValue).replace("-1", "NA"));
-		}
-		if(updatedSaleValue != null){
-			System.out.println(Objects.toString(this.timeStampMilliSec) + " S " + Objects.toString(updatedSaleValue).replace("-1", "NA"));
-		}
-	}
-	
-	/**
-	 * consumes trade messages from standard-input and write updates to sale-value
-	 * and buy-value to standard-output
-	 */
-	private void run(){
-		
-		Scanner scanner = new Scanner(System.in);
-		while(true){
-			String tradeMsg = scanner.nextLine();
-			if(tradeMsg == null){
-				break;
-			}
-			try {
-				this.consumeOrderAndProduceOutput(tradeMsg);
-			} catch (TradeOrderException e) {
-				System.err.println("WARNING: Invalid trade message received. Ignored.");
-			}
-		}
-		scanner.close();
-	}
-	
 	public static void main(String[] args) throws TradeOrderException{
 		if(args.length==1){
 			Long targetSize = Long.parseLong(args[0]);
 			Pricer pricer = new Pricer(targetSize);
 			pricer.run();
 		}else{
-			System.err.println("Did not receive expected command line argument for target-size");
+			System.err.println("Did not receive expected number of command line arguments [1] for target-size");
 		}
 	}
 	

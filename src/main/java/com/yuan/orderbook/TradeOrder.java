@@ -20,7 +20,7 @@ public class TradeOrder implements Comparable<TradeOrder>{
 	 * @param side
 	 * @param price
 	 * @param orderSize
-	 * @throws TradeOrderException 
+	 * @throws TradeOrderException - arguments do not conform to expected schema for trade-order
 	 */
 	public TradeOrder(String orderID, Long timeStampMilliSecs, Side side, BigDecimal price, Long orderSize) 
 			throws TradeOrderException{
@@ -152,6 +152,8 @@ public class TradeOrder implements Comparable<TradeOrder>{
 	
 	@Override
 	public String toString(){
-		return "{Order ID: " + this.orderID + " Quantity: " + this.orderSize + " Price " + this.price +"}";
+		String side = (this.getSide() == Side.ASK) ? "ASK" : "BID";
+		
+		return "{Order ID: " + this.orderID + ", Side " + side + ", Quantity: " + this.orderSize + ", Price: " + this.price +"}";
 	}
 }
