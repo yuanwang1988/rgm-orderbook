@@ -200,4 +200,11 @@ public class OrderHeap {
 		}
 	}
 	
+	
+	@Override
+	public String toString(){
+		return "{total_quantity: " + Long.toString(this.totalQuantity) + ",\n" +
+				"total_value: " + this.totalValue.toString() + ",\n" +
+				"orders (unordered): " + this.orderMap.toString() + "}";
+	}
 }

@@ -168,5 +168,14 @@ public class OrderBook {
 		}
 	}
 	
+	@Override
+	public String toString(){
+		String side = (this.side == Side.ASK) ? "ASK" : "BID";
+		
+		return "{side: " + side + ",\n" +
+				"target_size: " + Long.toString(this.targetSize) + ",\n" +
+				"top_order_heap: " + this.topHeap.toString() + ",\n" + 
+				"bottom_order_heap: " + this.bottomHeap.toString() + "}";
+	}
 
 }
